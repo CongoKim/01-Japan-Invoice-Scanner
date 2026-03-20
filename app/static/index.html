@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>日本发票扫描器</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .drop-zone.dragover { border-color: #3b82f6; background-color: #eff6ff; }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div class="max-w-2xl mx-auto py-12 px-4">
+        <h1 class="text-3xl font-bold text-center mb-2">日本发票扫描器</h1>
+        <p class="text-gray-500 text-center mb-8">上传包含发票图片或 PDF 的 ZIP 文件</p>
+
+        <!-- API Keys Section -->
+        <div class="bg-white rounded-xl shadow mb-6">
+            <button onclick="toggleApiKeys()" class="w-full flex items-center justify-between px-6 py-4 text-left hover:bg-gray-50 rounded-xl transition">
+                <div class="flex items-center gap-3">
+                    <svg class="h-5 w-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+                    </svg>
+                    <span class="font-medium text-gray-700">API 密钥</span>
+                    <div id="key-status-badges" class="flex gap-1.5"></div>
+                </div>
+                <svg id="api-chevron" class="h-4 w-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                </svg>
+            </button>
+            <div id="api-keys-panel" class="hidden px-6 pb-5 border-t border-gray-100">
+                <p class="text-xs text-gray-400 mt-3 mb-4">密钥仅保存在你的浏览器中，点击保存时才会发送到当前服务器。浏览器里保存的密钥会覆盖服务器 .env 中的值；清除后会自动回退到 .env 中可用的配置。</p>
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">Gemini API 密钥</label>
+                        <div class="flex items-center gap-2">
+                            <input id="key-gemini" type="password" placeholder="AIza..." class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono">
+                            <span id="val-gemini" class="text-lg w-6 text-center"></span>
+                        </div>
+                        <p id="src-gemini" class="text-xs text-gray-400 mt-1"></p>
+                        <p id="val-gemini-err" class="text-xs text-red-500 mt-1 hidden"></p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">OpenAI API 密钥</label>
+                        <div class="flex items-center gap-2">
+                            <input id="key-openai" type="password" placeholder="sk-..." class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono">
+                            <span id="val-openai" class="text-lg w-6 text-center"></span>
+                        </div>
+                        <p id="src-openai" class="text-xs text-gray-400 mt-1"></p>
+                        <p id="val-openai-err" class="text-xs text-red-500 mt-1 hidden"></p>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">Anthropic API 密钥</label>
+                        <div class="flex items-center gap-2">
+                            <input id="key-anthropic" type="password" placeholder="sk-ant-..." class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono">
+                            <span id="val-anthropic" class="text-lg w-6 text-center"></span>
+                        </div>
+                        <p id="src-anthropic" class="text-xs text-gray-400 mt-1"></p>
+                        <p id="val-anthropic-err" class="text-xs text-red-500 mt-1 hidden"></p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 mt-4">
+                    <button id="btn-save-keys" onclick="saveApiKeys()" class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 font-medium">保存并验证</button>
+                    <button onclick="clearApiKeys()" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm hover:bg-gray-200">清除已保存</button>
+                    <span id="key-save-msg" class="text-sm text-gray-500 hidden"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upload Section -->
+        <div id="upload-section">
+            <div id="drop-zone" class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-12 text-center cursor-pointer hover:border-blue-400 transition">
+                <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                </svg>
+                <p class="text-gray-600 mb-2">将 ZIP 文件拖到这里，或点击选择文件</p>
+                <p class="text-gray-400 text-sm">支持图片格式：JPEG、PNG、TIFF、BMP、WebP、HEIC，以及 PDF</p>
+                <input type="file" id="file-input" accept=".zip" class="hidden">
+            </div>
+        </div>
+
+        <!-- Progress Section -->
+        <div id="progress-section" class="hidden">
+            <div class="bg-white rounded-xl shadow p-6">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-lg font-semibold" id="status-text">等待上传</h2>
+                    <div id="control-buttons" class="flex gap-2">
+                        <button id="btn-start" onclick="startTask()" class="hidden px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700">开始处理</button>
+                        <button id="btn-pause" onclick="pauseTask()" class="hidden px-3 py-1 bg-yellow-500 text-white rounded text-sm hover:bg-yellow-600">暂停</button>
+                        <button id="btn-resume" onclick="resumeTask()" class="hidden px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600">继续</button>
+                        <button id="btn-cancel" onclick="cancelTask()" class="hidden px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600">取消</button>
+                    </div>
+                </div>
+
+                <!-- Progress bar -->
+                <div class="w-full bg-gray-200 rounded-full h-4 mb-2">
+                    <div id="progress-bar" class="bg-blue-500 h-4 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
+                <p class="text-sm text-gray-500 mb-4">
+                    <span id="progress-count">0/0</span> 个文件已处理
+                    <span id="current-file" class="ml-2 text-gray-400"></span>
+                </p>
+
+                <!-- Log area -->
+                <div id="log-area" class="bg-gray-900 text-green-400 rounded-lg p-4 h-48 overflow-y-auto font-mono text-xs"></div>
+            </div>
+        </div>
+
+        <!-- Result Section -->
+        <div id="result-section" class="hidden mt-6">
+            <div class="bg-white rounded-xl shadow p-6 text-center">
+                <svg class="mx-auto h-12 w-12 text-green-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <p id="result-text" class="text-lg font-semibold mb-4">处理完成！</p>
+                <button id="btn-download" onclick="downloadExcel()" class="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium">
+                    下载 Excel
+                </button>
+                <button onclick="resetUI()" class="ml-3 px-6 py-3 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium">
+                    重新上传
+                </button>
+            </div>
+        </div>
+
+        <!-- Disconnected Banner -->
+        <div id="disconnected-banner" class="hidden mt-4">
+            <div class="bg-yellow-50 border border-yellow-300 rounded-xl p-4 text-center">
+                <p class="text-yellow-700 mb-2">连接已断开，请重新连接以继续查看任务进度。</p>
+                <button onclick="reconnect()" class="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm">
+                    重新连接
+                </button>
+            </div>
+        </div>
+    </div>
+
+<script>
+let currentTaskId = null;
+let eventSource = null;
+let lastLogKey = null;
+let startRequestPending = false;
+let latestTaskStatus = null;
+
+// --- API Keys ---
+const KEY_STORAGE = { gemini: 'inv_key_gemini', openai: 'inv_key_openai', anthropic: 'inv_key_anthropic' };
+const PROVIDERS = ['gemini', 'openai', 'anthropic'];
+const PROVIDER_LABELS = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic' };
+const _keyStatus = Object.fromEntries(PROVIDERS.map(name => [
+    name,
+    { present: false, source: 'none', valid: null, error: '' },
+]));
+
+function toggleApiKeys() {
+    const panel = document.getElementById('api-keys-panel');
+    const chevron = document.getElementById('api-chevron');
+    const hidden = panel.classList.toggle('hidden');
+    chevron.style.transform = hidden ? '' : 'rotate(180deg)';
+}
+
+function normalizeStatus(info) {
+    return {
+        present: Boolean(info && info.present),
+        source: info && info.source ? info.source : 'none',
+        valid: info && info.valid === true ? true : info && info.valid === false ? false : null,
+        error: info && info.error ? info.error : '',
+    };
+}
+
+function renderKeyBadges() {
+    const container = document.getElementById('key-status-badges');
+    container.innerHTML = PROVIDERS.map(name => {
+        const info = _keyStatus[name];
+        const color = info.valid === true
+            ? 'bg-green-100 text-green-700'
+            : info.valid === false
+                ? 'bg-red-100 text-red-600'
+                : info.present
+                    ? 'bg-blue-100 text-blue-700'
+                    : 'bg-gray-100 text-gray-400';
+        const icon = info.valid === true ? ' ✓' : info.valid === false ? ' ✗' : '';
+        const source = info.source === 'browser' ? ' 浏览器' : info.source === 'env' ? ' .env' : '';
+        return `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${color}">${PROVIDER_LABELS[name]}${source}${icon}</span>`;
+    }).join('');
+}
+
+function renderProviderStatus(name) {
+    const info = _keyStatus[name];
+    const icon = document.getElementById(`val-${name}`);
+    const errEl = document.getElementById(`val-${name}-err`);
+    const sourceEl = document.getElementById(`src-${name}`);
+
+    if (info.valid === true) {
+        icon.textContent = '✓';
+        icon.className = 'text-lg w-6 text-center text-green-500';
+    } else if (info.valid === false) {
+        icon.textContent = '✗';
+        icon.className = 'text-lg w-6 text-center text-red-500';
+    } else if (info.present) {
+        icon.textContent = '•';
+        icon.className = 'text-lg w-6 text-center text-blue-500';
+    } else {
+        icon.textContent = '';
+        icon.className = 'text-lg w-6 text-center text-gray-300';
+    }
+
+    if (info.valid === false && info.error) {
+        errEl.textContent = info.error;
+        errEl.classList.remove('hidden');
+    } else {
+        errEl.textContent = '';
+        errEl.classList.add('hidden');
+    }
+
+    const sourceText = info.source === 'browser'
+        ? '正在使用浏览器中保存的密钥。'
+        : info.source === 'env'
+            ? '正在使用服务器 .env 中的密钥。'
+            : '尚未配置密钥。';
+    sourceEl.textContent = sourceText;
+}
+
+function applyStatusSnapshot(snapshot) {
+    PROVIDERS.forEach(name => {
+        _keyStatus[name] = normalizeStatus(snapshot[name]);
+        renderProviderStatus(name);
+    });
+    renderKeyBadges();
+}
+
+function applyValidationResult(result) {
+    PROVIDERS.forEach(name => {
+        const info = result[name] || { ok: false, error: 'Validation failed' };
+        _keyStatus[name] = {
+            ..._keyStatus[name],
+            valid: info.ok === true,
+            error: info.error || '',
+        };
+        renderProviderStatus(name);
+    });
+    renderKeyBadges();
+}
+
+function setValidatingState(on) {
+    const btn = document.getElementById('btn-save-keys');
+    const msg = document.getElementById('key-save-msg');
+    if (on) {
+        btn.disabled = true;
+        btn.textContent = '验证中...';
+        btn.classList.add('opacity-60', 'cursor-not-allowed');
+        msg.textContent = '';
+        msg.classList.add('hidden');
+        // Reset icons to spinner
+        for (const name of PROVIDERS) {
+            document.getElementById(`val-${name}`).textContent = '…';
+            document.getElementById(`val-${name}`).className = 'text-lg w-6 text-center text-gray-400';
+            document.getElementById(`val-${name}-err`).classList.add('hidden');
+        }
+    } else {
+        btn.disabled = false;
+        btn.textContent = '保存并验证';
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+    }
+}
+
+function loadInputsFromBrowserStorage() {
+    PROVIDERS.forEach(name => {
+        document.getElementById(`key-${name}`).value = localStorage.getItem(KEY_STORAGE[name]) || '';
+    });
+}
+
+function persistInputsToBrowserStorage() {
+    PROVIDERS.forEach(name => {
+        const value = document.getElementById(`key-${name}`).value.trim();
+        if (value) {
+            localStorage.setItem(KEY_STORAGE[name], value);
+        } else {
+            localStorage.removeItem(KEY_STORAGE[name]);
+        }
+    });
+}
+
+function getBrowserKeyPayload() {
+    return {
+        gemini_api_key: document.getElementById('key-gemini').value.trim(),
+        openai_api_key: document.getElementById('key-openai').value.trim(),
+        anthropic_api_key: document.getElementById('key-anthropic').value.trim(),
+    };
+}
+
+async function refreshKeyStatus() {
+    const res = await fetch('/api/settings/keys');
+    const data = await res.json();
+    applyStatusSnapshot(data);
+    return data;
+}
+
+async function loadKeyStatus() {
+    loadInputsFromBrowserStorage();
+    try {
+        await pushKeysToServer();
+        await refreshKeyStatus();
+    } catch (_) {
+        applyStatusSnapshot({});
+    }
+}
+
+async function pushKeysToServer() {
+    await fetch('/api/settings/keys', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(getBrowserKeyPayload()),
+    });
+}
+
+async function saveApiKeys() {
+    persistInputsToBrowserStorage();
+    setValidatingState(true);
+
+    try {
+        await pushKeysToServer();
+        const res = await fetch('/api/settings/validate', { method: 'POST' });
+        const result = await res.json();
+        applyValidationResult(result);
+        await refreshKeyStatus();
+
+        const allOk = PROVIDERS.every(name => result[name] && result[name].ok === true);
+        const msg = document.getElementById('key-save-msg');
+        msg.textContent = allOk ? '全部密钥验证通过 ✓' : '部分密钥验证失败，请检查上方提示';
+        msg.className = `text-sm ${allOk ? 'text-green-600' : 'text-red-500'}`;
+        msg.classList.remove('hidden');
+    } catch (_) {
+        const msg = document.getElementById('key-save-msg');
+        msg.textContent = '验证请求失败';
+        msg.className = 'text-sm text-red-500';
+        msg.classList.remove('hidden');
+    } finally {
+        setValidatingState(false);
+    }
+}
+
+async function clearApiKeys() {
+    Object.values(KEY_STORAGE).forEach(k => localStorage.removeItem(k));
+    PROVIDERS.forEach(name => {
+        document.getElementById(`key-${name}`).value = '';
+    });
+
+    const msg = document.getElementById('key-save-msg');
+    msg.textContent = '';
+    msg.classList.add('hidden');
+
+    try {
+        await pushKeysToServer();
+        await refreshKeyStatus();
+    } catch (_) {
+        applyStatusSnapshot({});
+    }
+}
+
+// Init on load
+loadKeyStatus();
+
+// --- Drop zone ---
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+async function handleFile(file) {
+    if (!file.name.endsWith('.zip')) {
+        alert('请上传 .zip 文件');
+        return;
+    }
+
+    // Block if any key is not validated
+    const failed = PROVIDERS.filter(name => _keyStatus[name].valid !== true);
+    if (failed.length > 0) {
+        alert(`上传前请先验证全部 API 密钥。\n未验证：${failed.map(name => PROVIDER_LABELS[name]).join('、')}\n\n请在“API 密钥”面板中点击“保存并验证”。`);
+        // Expand the panel to guide the user
+        const panel = document.getElementById('api-keys-panel');
+        const chevron = document.getElementById('api-chevron');
+        if (panel.classList.contains('hidden')) {
+            panel.classList.remove('hidden');
+            chevron.style.transform = 'rotate(180deg)';
+        }
+        return;
+    }
+
+    showSection('progress');
+    document.getElementById('status-text').textContent = '正在上传 ZIP...';
+    document.getElementById('current-file').textContent = '';
+    setStartButtonState(false);
+    latestTaskStatus = null;
+    addLog('正在上传 ZIP 文件...');
+
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+        const resp = await fetch('/api/upload', { method: 'POST', body: formData });
+        const data = await resp.json();
+        if (!resp.ok) {
+            throw new Error(data.detail || 'Upload failed');
+        }
+        currentTaskId = data.task_id;
+        addLog(`任务已创建：${currentTaskId}`);
+        addLog('ZIP 上传成功，请点击“开始处理”。');
+        connectSSE();
+    } catch (err) {
+        addLog(`上传失败：${err.message}`);
+    }
+}
+
+// --- SSE ---
+function connectSSE() {
+    if (eventSource) eventSource.close();
+    document.getElementById('disconnected-banner').classList.add('hidden');
+
+    eventSource = new EventSource(`/api/progress/${currentTaskId}`);
+
+    eventSource.addEventListener('progress', e => {
+        const d = JSON.parse(e.data);
+        updateProgress(d);
+    });
+
+    eventSource.addEventListener('error', () => {
+        eventSource.close();
+        eventSource = null;
+        if (!['done', 'error', 'cancelled'].includes(latestTaskStatus)) {
+            document.getElementById('disconnected-banner').classList.remove('hidden');
+        }
+    });
+}
+
+function updateProgress(d) {
+    latestTaskStatus = d.status;
+    if (d.status !== 'uploaded' && startRequestPending) {
+        setStartButtonState(false);
+    }
+
+    const pct = d.total_files > 0 ? Math.round((d.processed_files / d.total_files) * 100) : 0;
+    document.getElementById('progress-bar').style.width = pct + '%';
+    document.getElementById('progress-count').textContent = `${d.processed_files}/${d.total_files}`;
+
+    if (d.current_file) {
+        const label = d.status === 'uploaded' ? '已上传' : '当前';
+        document.getElementById('current-file').textContent = `${label}: ${d.current_file}`;
+    } else {
+        document.getElementById('current-file').textContent = '';
+    }
+
+    // Status text
+    const statusMap = {
+        uploaded: '等待开始',
+        extracting: '正在解压 ZIP...',
+        analyzing: '正在分析文件...',
+        processing: '正在处理发票...',
+        paused: '已暂停',
+        writing_excel: '正在生成 Excel...',
+        done: '处理完成！',
+        error: '错误：' + (d.error_message || ''),
+        cancelled: '已取消',
+    };
+    document.getElementById('status-text').textContent = statusMap[d.status] || d.status;
+
+    // Button visibility
+    const btnStart = document.getElementById('btn-start');
+    const btnPause = document.getElementById('btn-pause');
+    const btnResume = document.getElementById('btn-resume');
+    const btnCancel = document.getElementById('btn-cancel');
+
+    btnStart.classList.toggle('hidden', d.status !== 'uploaded');
+    btnPause.classList.toggle('hidden', d.status !== 'processing');
+    btnResume.classList.toggle('hidden', d.status !== 'paused');
+    btnCancel.classList.toggle('hidden', ['done', 'error', 'cancelled'].includes(d.status));
+
+    // Progress bar color
+    const bar = document.getElementById('progress-bar');
+    bar.classList.remove('bg-blue-500', 'bg-yellow-500', 'bg-green-500', 'bg-red-500', 'bg-gray-400');
+    if (d.status === 'uploaded') bar.classList.add('bg-gray-400');
+    else if (d.status === 'paused') bar.classList.add('bg-yellow-500');
+    else if (d.status === 'done') bar.classList.add('bg-green-500');
+    else if (d.status === 'error' || d.status === 'cancelled') bar.classList.add('bg-red-500');
+    else bar.classList.add('bg-blue-500');
+
+    const logKey = `${d.status}|${d.processed_files}|${d.current_file}`;
+    if (logKey !== lastLogKey) {
+        lastLogKey = logKey;
+        addLog(`[${d.status}] ${d.processed_files}/${d.total_files} - ${d.current_file || ''}`);
+    }
+
+    // Show result section
+    if (d.status === 'done' || (d.status === 'cancelled' && d.excel_ready)) {
+        document.getElementById('result-section').classList.remove('hidden');
+        document.getElementById('btn-download').classList.remove('hidden');
+        document.getElementById('result-text').textContent =
+            d.status === 'done'
+                ? `处理完成！已处理 ${d.processed_files} 张发票。`
+                : `任务已取消。已处理 ${d.processed_files} 张发票，可下载部分结果。`;
+    }
+    if (d.status === 'error') {
+        document.getElementById('result-section').classList.remove('hidden');
+        document.getElementById('result-text').textContent = `错误：${d.error_message}`;
+        document.getElementById('btn-download').classList.toggle('hidden', !d.excel_ready);
+    }
+}
+
+// --- Controls ---
+function setStartButtonState(loading) {
+    const btn = document.getElementById('btn-start');
+    startRequestPending = loading;
+    btn.disabled = loading;
+    btn.textContent = loading ? '开始中...' : '开始处理';
+    btn.classList.toggle('opacity-60', loading);
+    btn.classList.toggle('cursor-not-allowed', loading);
+}
+
+async function startTask() {
+    if (!currentTaskId || startRequestPending) return;
+
+    setStartButtonState(true);
+    try {
+        const resp = await fetch(`/api/task/${currentTaskId}/start`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) {
+            throw new Error(data.detail || '启动任务失败');
+        }
+        addLog('任务已开始处理。');
+    } catch (err) {
+        addLog(`启动失败：${err.message}`);
+        setStartButtonState(false);
+    }
+}
+
+async function pauseTask() {
+    await fetch(`/api/task/${currentTaskId}/pause`, { method: 'POST' });
+}
+
+async function resumeTask() {
+    await fetch(`/api/task/${currentTaskId}/resume`, { method: 'POST' });
+}
+
+async function cancelTask() {
+    if (!confirm('确认取消处理吗？已完成的部分结果仍然可以下载。')) return;
+    await fetch(`/api/task/${currentTaskId}/cancel`, { method: 'POST' });
+}
+
+async function reconnect() {
+    document.getElementById('disconnected-banner').classList.add('hidden');
+    connectSSE();
+}
+
+function downloadExcel() {
+    window.open(`/api/download/${currentTaskId}`, '_blank');
+}
+
+// --- UI helpers ---
+function showSection(section) {
+    document.getElementById('upload-section').classList.toggle('hidden', section !== 'upload');
+    document.getElementById('progress-section').classList.toggle('hidden', section !== 'progress');
+    document.getElementById('result-section').classList.add('hidden');
+    document.getElementById('disconnected-banner').classList.add('hidden');
+}
+
+function resetUI() {
+    currentTaskId = null;
+    lastLogKey = null;
+    latestTaskStatus = null;
+    setStartButtonState(false);
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    document.getElementById('log-area').innerHTML = '';
+    document.getElementById('progress-bar').style.width = '0%';
+    document.getElementById('progress-count').textContent = '0/0';
+    document.getElementById('current-file').textContent = '';
+    document.getElementById('status-text').textContent = '等待上传';
+    document.getElementById('btn-download').classList.remove('hidden');
+    showSection('upload');
+    fileInput.value = '';
+}
+
+function addLog(msg) {
+    const area = document.getElementById('log-area');
+    const div = document.createElement('div');
+    div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    area.appendChild(div);
+    area.scrollTop = area.scrollHeight;
+}
+</script>
+</body>
+</html>
