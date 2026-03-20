@@ -101,6 +101,34 @@
                     <span id="current-file" class="ml-2 text-gray-400"></span>
                 </p>
 
+                <!-- Model usage stats -->
+                <div id="model-stats" class="hidden mb-4">
+                    <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                        <h3 class="text-sm font-semibold text-gray-600 mb-2">模型调用统计</h3>
+                        <div class="grid grid-cols-3 gap-3 text-xs">
+                            <div class="bg-white rounded-lg p-3 border">
+                                <div class="font-semibold text-blue-600 mb-1">Gemini</div>
+                                <div id="stats-gemini-calls" class="text-gray-500"></div>
+                                <div id="stats-gemini-cost" class="text-orange-600 font-medium mt-1"></div>
+                            </div>
+                            <div class="bg-white rounded-lg p-3 border">
+                                <div class="font-semibold text-green-600 mb-1">OpenAI</div>
+                                <div id="stats-openai-calls" class="text-gray-500"></div>
+                                <div id="stats-openai-cost" class="text-orange-600 font-medium mt-1"></div>
+                            </div>
+                            <div class="bg-white rounded-lg p-3 border">
+                                <div class="font-semibold text-purple-600 mb-1">Claude</div>
+                                <div id="stats-claude-calls" class="text-gray-500"></div>
+                                <div id="stats-claude-cost" class="text-orange-600 font-medium mt-1"></div>
+                            </div>
+                        </div>
+                        <div class="mt-2 flex justify-between items-center">
+                            <span class="text-xs text-gray-400">* 费用为估算值，实际以 API 账单为准</span>
+                            <span id="stats-total-cost" class="text-sm font-semibold text-orange-600"></span>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Log area -->
                 <div id="log-area" class="bg-gray-900 text-green-400 rounded-lg p-4 h-48 overflow-y-auto font-mono text-xs"></div>
             </div>
@@ -139,6 +167,51 @@ let eventSource = null;
 let lastLogKey = null;
 let startRequestPending = false;
 let latestTaskStatus = null;
+
+// Per-call cost estimates in USD (approximate)
+const COST_PER_CALL = {
+    gemini: { extract: 0.02, detect_multi: 0.01 },
+    openai: { extract: 0.03 },
+    claude: { arbitrate: 0.02, extract: 0.02, review_receipt: 0.01 },
+};
+const CALL_TYPE_LABELS = {
+    extract: '提取',
+    detect_multi: '多页检测',
+    arbitrate: '仲裁',
+    review_receipt: '总额评审',
+};
+
+function updateModelStats(modelCalls) {
+    if (!modelCalls) return;
+    const statsPanel = document.getElementById('model-stats');
+    const hasAnyCalls = Object.values(modelCalls).some(
+        calls => Object.values(calls).some(n => n > 0)
+    );
+    if (!hasAnyCalls) { statsPanel.classList.add('hidden'); return; }
+    statsPanel.classList.remove('hidden');
+
+    let totalCost = 0;
+    for (const [model, calls] of Object.entries(modelCalls)) {
+        const callsEl = document.getElementById(`stats-${model}-calls`);
+        const costEl = document.getElementById(`stats-${model}-cost`);
+        if (!callsEl) continue;
+
+        const lines = [];
+        let modelCost = 0;
+        for (const [callType, count] of Object.entries(calls)) {
+            if (count > 0) {
+                const label = CALL_TYPE_LABELS[callType] || callType;
+                lines.push(`${label}: ${count} 次`);
+                const unitCost = (COST_PER_CALL[model] && COST_PER_CALL[model][callType]) || 0;
+                modelCost += count * unitCost;
+            }
+        }
+        callsEl.innerHTML = lines.join('<br>') || '0 次';
+        costEl.textContent = modelCost > 0 ? `~$${modelCost.toFixed(2)}` : '$0.00';
+        totalCost += modelCost;
+    }
+    document.getElementById('stats-total-cost').textContent = `预估总计: ~$${totalCost.toFixed(2)}`;
+}
 
 // --- API Keys ---
 const KEY_STORAGE = { gemini: 'inv_key_gemini', openai: 'inv_key_openai', anthropic: 'inv_key_anthropic' };
@@ -443,6 +516,7 @@ function updateProgress(d) {
     if (d.status !== 'uploaded' && startRequestPending) {
         setStartButtonState(false);
     }
+    updateModelStats(d.model_calls);
 
     const pct = d.total_files > 0 ? Math.round((d.processed_files / d.total_files) * 100) : 0;
     document.getElementById('progress-bar').style.width = pct + '%';
@@ -575,6 +649,7 @@ function resetUI() {
     setStartButtonState(false);
     if (eventSource) { eventSource.close(); eventSource = null; }
     document.getElementById('log-area').innerHTML = '';
+    document.getElementById('model-stats').classList.add('hidden');
     document.getElementById('progress-bar').style.width = '0%';
     document.getElementById('progress-count').textContent = '0/0';
     document.getElementById('current-file').textContent = '';

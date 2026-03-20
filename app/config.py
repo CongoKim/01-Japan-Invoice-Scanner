@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     gemini_model: str = "gemini-2.5-pro"
     openai_model: str = "gpt-4o"
-    claude_model: str = "claude-opus-4-20250514"
+    claude_model: str = "claude-sonnet-4-20250514"
     max_concurrency: int = 10
     port: int = 8000
     max_upload_size_bytes: int = 100 * 1024 * 1024

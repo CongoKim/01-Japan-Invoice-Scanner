@@ -22,6 +22,17 @@ from app.services.prompt import build_extraction_prompt
 from app.services.task_runtime import get_task_output_path
 
 logger = logging.getLogger(__name__)
+
+
+def _track_call(task_id: str, model: str, call_type: str) -> None:
+    """Increment model call counter for the given task."""
+    task = task_store.get(task_id)
+    if task and model in task.model_calls:
+        task.model_calls[model][call_type] = (
+            task.model_calls[model].get(call_type, 0) + 1
+        )
+
+
 ANALYSIS_CONCURRENCY_LIMIT = 4
 WORK_QUEUE_MULTIPLIER = 2
 MAX_RETRIES = 2
@@ -138,6 +149,7 @@ def _should_review_single_model(result: InvoiceFields) -> bool:
 
 async def _review_single_model_result(
     *,
+    task_id: str,
     file_label: str,
     images: list[bytes],
     receipt_like: bool,
@@ -156,6 +168,7 @@ async def _review_single_model_result(
         )
 
     try:
+        _track_call(task_id, "claude", "extract")
         reviewed_result = await _call_with_retry(
             lambda: claude.extract_invoice(
                 images,
@@ -194,6 +207,7 @@ def _should_review_receipt_total(receipt_like: bool, result: InvoiceFields) -> b
 
 async def _maybe_review_receipt_total(
     *,
+    task_id: str,
     file_label: str,
     images: list[bytes],
     receipt_like: bool,
@@ -204,6 +218,7 @@ async def _maybe_review_receipt_total(
         return result
 
     try:
+        _track_call(task_id, "claude", "review_receipt")
         review_data = await _call_with_retry(
             lambda: claude.review_receipt_total(images)
         )
@@ -340,6 +355,7 @@ def _prepare_images(file_path: Path) -> list[bytes]:
 
 
 async def _handle_multi_page_pdf(
+    task_id: str,
     file_path: Path,
     page_images: list[bytes],
     gemini: GeminiClient,
@@ -349,6 +365,7 @@ async def _handle_multi_page_pdf(
         return [(file_path.name, page_images)]
 
     try:
+        _track_call(task_id, "gemini", "detect_multi")
         detection = await _call_with_retry(
             lambda: gemini.detect_multi_invoice(page_images)
         )
@@ -397,7 +414,7 @@ async def _analyze_file(
     if is_pdf(file_path) and len(page_images) > 1:
         analyzed_items = [
             (label, images, False)
-            for label, images in await _handle_multi_page_pdf(file_path, page_images, gemini)
+            for label, images in await _handle_multi_page_pdf(task_id, file_path, page_images, gemini)
         ]
     else:
         analyzed_items = [(file_path.name, page_images, receipt_like)]
@@ -476,6 +493,7 @@ async def _produce_work_items(
 
 
 async def _process_single_invoice(
+    task_id: str,
     file_label: str,
     images: list[bytes],
     receipt_like: bool,
@@ -485,6 +503,8 @@ async def _process_single_invoice(
 ) -> InvoiceFields:
     """Process a single invoice: Gemini + OpenAI parallel -> compare -> maybe Claude."""
     extraction_prompt = build_extraction_prompt(receipt_like)
+    _track_call(task_id, "gemini", "extract")
+    _track_call(task_id, "openai", "extract")
     gemini_result, openai_result = await asyncio.gather(
         _call_with_retry(
             lambda: gemini.extract_invoice(images, file_label, prompt=extraction_prompt)
@@ -517,6 +537,7 @@ async def _process_single_invoice(
         logger.warning(f"Gemini failed for {file_label}: {gemini_result}")
         if isinstance(openai_result, InvoiceFields):
             result = await _review_single_model_result(
+                task_id=task_id,
                 file_label=file_label,
                 images=images,
                 receipt_like=receipt_like,
@@ -526,6 +547,7 @@ async def _process_single_invoice(
                 gemini_error=gemini_error,
             )
             return await _maybe_review_receipt_total(
+                task_id=task_id,
                 file_label=file_label,
                 images=images,
                 receipt_like=receipt_like,
@@ -542,6 +564,7 @@ async def _process_single_invoice(
         logger.warning(f"OpenAI failed for {file_label}: {openai_result}")
         if isinstance(gemini_result, InvoiceFields):
             result = await _review_single_model_result(
+                task_id=task_id,
                 file_label=file_label,
                 images=images,
                 receipt_like=receipt_like,
@@ -551,6 +574,7 @@ async def _process_single_invoice(
                 openai_error=openai_error,
             )
             return await _maybe_review_receipt_total(
+                task_id=task_id,
                 file_label=file_label,
                 images=images,
                 receipt_like=receipt_like,
@@ -564,6 +588,7 @@ async def _process_single_invoice(
         )
 
     try:
+        _track_call(task_id, "claude", "arbitrate")
         result = await _call_with_retry(
             lambda: compare_and_arbitrate(
                 gemini_result,
@@ -576,6 +601,7 @@ async def _process_single_invoice(
         )
         result = _attach_model_errors(result)
         return await _maybe_review_receipt_total(
+            task_id=task_id,
             file_label=file_label,
             images=images,
             receipt_like=receipt_like,
@@ -587,6 +613,7 @@ async def _process_single_invoice(
         gemini_result.source_model = f"gemini-fallback:{gemini_result.source_model}"
         result = _attach_model_errors(gemini_result)
         return await _maybe_review_receipt_total(
+            task_id=task_id,
             file_label=file_label,
             images=images,
             receipt_like=receipt_like,
@@ -620,7 +647,7 @@ async def _ocr_worker(
 
             try:
                 result = await _process_single_invoice(
-                    label, images, receipt_like, gemini, openai_client, claude
+                    task_id, label, images, receipt_like, gemini, openai_client, claude
                 )
             except Exception as e:
                 result = InvoiceFields(file_name=label, error=str(e))

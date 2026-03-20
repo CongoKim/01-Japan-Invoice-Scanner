@@ -14,6 +14,14 @@ TaskStatusType = Literal[
 ]
 
 
+def _default_model_calls() -> dict[str, dict[str, int]]:
+    return {
+        "gemini": {"extract": 0, "detect_multi": 0},
+        "openai": {"extract": 0},
+        "claude": {"arbitrate": 0, "extract": 0, "review_receipt": 0},
+    }
+
+
 class TaskState(BaseModel):
     task_id: str
     status: TaskStatusType = "uploaded"
@@ -24,6 +32,7 @@ class TaskState(BaseModel):
     excel_ready: bool = False
     completed_results: list[InvoiceFields] = Field(default_factory=list)
     pending_files: list[str] = Field(default_factory=list)
+    model_calls: dict[str, dict[str, int]] = Field(default_factory=_default_model_calls)
     created_at: float = Field(default_factory=time.time)
     updated_at: float = Field(default_factory=time.time)
     finished_at: float | None = None
