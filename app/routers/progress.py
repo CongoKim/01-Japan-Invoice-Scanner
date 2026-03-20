@@ -19,6 +19,12 @@ async def progress_stream(task_id: str):
                 yield {"event": "error", "data": '{"error": "任务不存在"}'}
                 break
 
+            # Snapshot break-condition values BEFORE yield (yield is an
+            # async suspend point; the orchestrator may mutate the task
+            # while the SSE framework is sending the payload).
+            snap_status = task.status
+            snap_finished = task.finished_at is not None
+
             # Exclude heavy fields from SSE payload
             payload = task.model_dump(
                 exclude={
@@ -32,7 +38,9 @@ async def progress_stream(task_id: str):
             import json
             yield {"event": "progress", "data": json.dumps(payload, ensure_ascii=False)}
 
-            if task.status in ("done", "error", "cancelled"):
+            if snap_status in ("done", "error"):
+                break
+            if snap_status == "cancelled" and snap_finished:
                 break
 
             last_seen_version = await task_store.wait(

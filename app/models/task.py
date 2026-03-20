@@ -17,7 +17,7 @@ TaskStatusType = Literal[
 def _default_model_calls() -> dict[str, dict[str, int]]:
     return {
         "gemini": {"extract": 0, "detect_multi": 0},
-        "openai": {"extract": 0},
+        "openai": {"extract": 0, "detect_multi": 0},
         "claude": {"arbitrate": 0, "extract": 0, "review_receipt": 0},
     }
 

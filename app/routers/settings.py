@@ -6,7 +6,14 @@ import httpx
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.config import API_PROVIDERS, ApiProvider, get_api_key_source, get_effective_api_key, runtime_api_keys
+from app.config import (
+    API_PROVIDERS,
+    ApiProvider,
+    get_api_key_source,
+    get_effective_api_key,
+    runtime_api_keys,
+    settings,
+)
 from app.services import orchestrator
 
 router = APIRouter()
@@ -231,7 +238,13 @@ async def validate_keys():
 
 @router.get("/api/settings/keys")
 async def get_api_keys():
-    return {
+    payload = {
         provider: _status_payload(provider)
         for provider in API_PROVIDERS
     }
+    payload["_models"] = {
+        "gemini": settings.gemini_model,
+        "openai": settings.openai_model,
+        "anthropic": settings.claude_model,
+    }
+    return payload

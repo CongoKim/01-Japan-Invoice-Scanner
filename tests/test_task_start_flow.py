@@ -67,7 +67,7 @@ class TaskStartFlowTests(unittest.TestCase):
         task = task_store.get(task_id)
         self.assertIsNotNone(task)
         self.assertEqual(task.status, "extracting")
-        self.assertEqual(task.current_file, "Extracting ZIP...")
+        self.assertEqual(task.current_file, "正在解压 ZIP...")
 
         second_response = self.client.post(f"/api/task/{task_id}/start")
         self.assertEqual(second_response.status_code, 400)

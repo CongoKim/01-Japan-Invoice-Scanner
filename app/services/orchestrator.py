@@ -354,21 +354,74 @@ def _prepare_images(file_path: Path) -> list[bytes]:
         return images
 
 
+def _pick_detection(
+    gemini_det: dict | Exception | None,
+    openai_det: dict | Exception | None,
+) -> dict | None:
+    """Pick the best multi-page detection result from two models.
+
+    Strategy: if both succeed, prefer the one with more invoices (safer to
+    over-split than to miss).  If only one succeeds, use that one.
+    """
+    g_ok = isinstance(gemini_det, dict)
+    o_ok = isinstance(openai_det, dict)
+    if not g_ok and not o_ok:
+        return None
+    if g_ok and not o_ok:
+        return gemini_det
+    if o_ok and not g_ok:
+        return openai_det
+    # Both succeeded — pick the one that found more invoices
+    g_count = gemini_det.get("invoice_count", 1)
+    o_count = openai_det.get("invoice_count", 1)
+    if o_count > g_count:
+        return openai_det
+    return gemini_det
+
+
 async def _handle_multi_page_pdf(
     task_id: str,
     file_path: Path,
     page_images: list[bytes],
     gemini: GeminiClient,
+    openai_client: OpenAIClient,
 ) -> list[tuple[str, list[bytes]]]:
-    """For multi-page PDFs, detect if it contains multiple invoices."""
+    """For multi-page PDFs, detect if it contains multiple invoices.
+
+    Runs Gemini and OpenAI detection in parallel for cross-validation.
+    """
     if len(page_images) == 1:
         return [(file_path.name, page_images)]
 
     try:
         _track_call(task_id, "gemini", "detect_multi")
-        detection = await _call_with_retry(
-            lambda: gemini.detect_multi_invoice(page_images)
+        _track_call(task_id, "openai", "detect_multi")
+        gemini_det, openai_det = await asyncio.gather(
+            _call_with_retry(
+                lambda: gemini.detect_multi_invoice(page_images)
+            ),
+            _call_with_retry(
+                lambda: openai_client.detect_multi_invoice(page_images)
+            ),
+            return_exceptions=True,
         )
+
+        if isinstance(gemini_det, Exception):
+            logger.warning(
+                f"Gemini multi-page detection failed for {file_path.name}: {gemini_det}"
+            )
+        if isinstance(openai_det, Exception):
+            logger.warning(
+                f"OpenAI multi-page detection failed for {file_path.name}: {openai_det}"
+            )
+
+        detection = _pick_detection(gemini_det, openai_det)
+        if detection is None:
+            logger.warning(
+                f"Both models failed multi-page detection for {file_path.name}"
+            )
+            return [(file_path.name, page_images)]
+
         invoice_count = detection.get("invoice_count", 1)
         invoices_info = detection.get("invoices", [])
 
@@ -394,13 +447,14 @@ async def _analyze_file(
     file_index: int,
     file_path: Path,
     gemini: GeminiClient,
+    openai_client: OpenAIClient,
 ) -> list[WorkItem]:
     """Analyze a single file and return zero or more work items."""
     task = await _wait_until_active(task_id)
     if not task:
         return []
 
-    task.current_file = f"Analyzing: {file_path.name}"
+    task.current_file = f"正在分析：{file_path.name}"
     task_store.notify(task_id)
 
     page_images = await asyncio.to_thread(_prepare_images, file_path)
@@ -414,7 +468,9 @@ async def _analyze_file(
     if is_pdf(file_path) and len(page_images) > 1:
         analyzed_items = [
             (label, images, False)
-            for label, images in await _handle_multi_page_pdf(task_id, file_path, page_images, gemini)
+            for label, images in await _handle_multi_page_pdf(
+                task_id, file_path, page_images, gemini, openai_client
+            )
         ]
     else:
         analyzed_items = [(file_path.name, page_images, receipt_like)]
@@ -429,6 +485,7 @@ async def _produce_work_items(
     task_id: str,
     files: list[Path],
     gemini: GeminiClient,
+    openai_client: OpenAIClient,
     work_queue: asyncio.Queue[WorkItem | None],
     results: dict[tuple[int, int], InvoiceFields],
 ) -> None:
@@ -440,7 +497,7 @@ async def _produce_work_items(
     async def analyze_limited(file_index: int, file_path: Path) -> AnalysisOutcome:
         async with semaphore:
             try:
-                work_items = await _analyze_file(task_id, file_index, file_path, gemini)
+                work_items = await _analyze_file(task_id, file_index, file_path, gemini, openai_client)
                 return (file_index, file_path.name, work_items, None)
             except Exception as e:
                 return (file_index, file_path.name, [], str(e))
@@ -669,7 +726,7 @@ async def process_task(task_id: str, zip_path: Path, task_dir: Path) -> None:
 
     try:
         task.status = "extracting"
-        task.current_file = "Extracting ZIP..."
+        task.current_file = "正在解压 ZIP..."
         task_store.notify(task_id)
 
         files = await asyncio.to_thread(extract_zip, zip_path, task_dir)
@@ -680,7 +737,7 @@ async def process_task(task_id: str, zip_path: Path, task_dir: Path) -> None:
             return
 
         task.status = "analyzing"
-        task.current_file = "Analyzing files..."
+        task.current_file = "正在分析文件..."
         task_store.notify(task_id)
 
         gemini, openai_client, claude = _get_clients()
@@ -708,7 +765,7 @@ async def process_task(task_id: str, zip_path: Path, task_dir: Path) -> None:
 
         producer_error: Exception | None = None
         try:
-            await _produce_work_items(task_id, files, gemini, work_queue, results)
+            await _produce_work_items(task_id, files, gemini, openai_client, work_queue, results)
         except Exception as e:
             producer_error = e
         finally:
@@ -729,7 +786,7 @@ async def process_task(task_id: str, zip_path: Path, task_dir: Path) -> None:
         if task.status != "cancelled" or task.completed_results:
             if task.status != "cancelled":
                 task.status = "writing_excel"
-            task.current_file = "Generating Excel..."
+            task.current_file = "正在生成 Excel..."
             task_store.notify(task_id)
 
             excel_path = get_task_output_path(task_id)

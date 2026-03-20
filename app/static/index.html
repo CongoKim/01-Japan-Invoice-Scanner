@@ -7,9 +7,16 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         .drop-zone.dragover { border-color: #3b82f6; background-color: #eff6ff; }
+        .toast-container { position: fixed; top: 1rem; right: 1rem; z-index: 9999; display: flex; flex-direction: column; gap: 0.5rem; }
+        .toast { padding: 0.75rem 1rem; border-radius: 0.5rem; font-size: 0.875rem; color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.15); animation: toast-in 0.3s ease; max-width: 24rem; }
+        .toast-error { background: #ef4444; }
+        .toast-warn { background: #f59e0b; }
+        .toast-info { background: #3b82f6; }
+        @keyframes toast-in { from { opacity: 0; transform: translateY(-0.5rem); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
+    <div id="toast-container" class="toast-container"></div>
     <div class="max-w-2xl mx-auto py-12 px-4">
         <h1 class="text-3xl font-bold text-center mb-2">日本发票扫描器</h1>
         <p class="text-gray-500 text-center mb-8">上传包含发票图片或 PDF 的 ZIP 文件</p>
@@ -22,7 +29,7 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
                     </svg>
                     <span class="font-medium text-gray-700">API 密钥</span>
-                    <div id="key-status-badges" class="flex gap-1.5"></div>
+                    <div id="key-status-badges" class="flex flex-wrap gap-1.5"></div>
                 </div>
                 <svg id="api-chevron" class="h-4 w-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
@@ -32,7 +39,7 @@
                 <p class="text-xs text-gray-400 mt-3 mb-4">密钥仅保存在你的浏览器中，点击保存时才会发送到当前服务器。浏览器里保存的密钥会覆盖服务器 .env 中的值；清除后会自动回退到 .env 中可用的配置。</p>
                 <div class="space-y-3">
                     <div>
-                        <label class="block text-sm font-medium text-gray-600 mb-1">Gemini API 密钥</label>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">Google API 密钥</label>
                         <div class="flex items-center gap-2">
                             <input id="key-gemini" type="password" placeholder="AIza..." class="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 font-mono">
                             <span id="val-gemini" class="text-lg w-6 text-center"></span>
@@ -69,7 +76,8 @@
 
         <!-- Upload Section -->
         <div id="upload-section">
-            <div id="drop-zone" class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-12 text-center cursor-pointer hover:border-blue-400 transition">
+            <div id="drop-zone" role="button" tabindex="0" class="drop-zone border-2 border-dashed border-gray-300 rounded-xl p-12 text-center cursor-pointer hover:border-blue-400 transition"
+                 aria-label="选择或拖放 ZIP 文件">
                 <svg class="mx-auto h-12 w-12 text-gray-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
                 </svg>
@@ -104,20 +112,23 @@
                 <!-- Model usage stats -->
                 <div id="model-stats" class="hidden mb-4">
                     <div class="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                        <h3 class="text-sm font-semibold text-gray-600 mb-2">模型调用统计</h3>
-                        <div class="grid grid-cols-3 gap-3 text-xs">
+                        <h3 class="text-sm font-semibold text-gray-600 mb-2">AI 模型调用统计</h3>
+                        <div class="grid grid-cols-1 gap-3 text-xs sm:grid-cols-3">
                             <div class="bg-white rounded-lg p-3 border">
-                                <div class="font-semibold text-blue-600 mb-1">Gemini</div>
+                                <div id="stats-gemini-label" class="font-semibold text-blue-600 mb-1">Gemini 2.5 Pro</div>
+                                <div class="text-[11px] text-gray-400 mb-2">主提取 / 多页检测</div>
                                 <div id="stats-gemini-calls" class="text-gray-500"></div>
                                 <div id="stats-gemini-cost" class="text-orange-600 font-medium mt-1"></div>
                             </div>
                             <div class="bg-white rounded-lg p-3 border">
-                                <div class="font-semibold text-green-600 mb-1">OpenAI</div>
+                                <div id="stats-openai-label" class="font-semibold text-green-600 mb-1">GPT-4o</div>
+                                <div class="text-[11px] text-gray-400 mb-2">交叉提取 / 多页检测</div>
                                 <div id="stats-openai-calls" class="text-gray-500"></div>
                                 <div id="stats-openai-cost" class="text-orange-600 font-medium mt-1"></div>
                             </div>
                             <div class="bg-white rounded-lg p-3 border">
-                                <div class="font-semibold text-purple-600 mb-1">Claude</div>
+                                <div id="stats-claude-label" class="font-semibold text-purple-600 mb-1">Claude Sonnet 4</div>
+                                <div class="text-[11px] text-gray-400 mb-2">仲裁 / 结果复核</div>
                                 <div id="stats-claude-calls" class="text-gray-500"></div>
                                 <div id="stats-claude-cost" class="text-orange-600 font-medium mt-1"></div>
                             </div>
@@ -153,25 +164,54 @@
         <!-- Disconnected Banner -->
         <div id="disconnected-banner" class="hidden mt-4">
             <div class="bg-yellow-50 border border-yellow-300 rounded-xl p-4 text-center">
-                <p class="text-yellow-700 mb-2">连接已断开，请重新连接以继续查看任务进度。</p>
-                <button onclick="reconnect()" class="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm">
-                    重新连接
+                <p id="disconnected-text" class="text-yellow-700 mb-2">连接已断开，正在尝试重新连接...</p>
+                <button id="btn-reconnect" onclick="manualReconnect()" class="hidden px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600 text-sm">
+                    手动重新连接
                 </button>
             </div>
         </div>
     </div>
 
 <script>
-let currentTaskId = null;
+// ===================== State =====================
+let currentTaskId = sessionStorage.getItem('inv_task_id') || null;
 let eventSource = null;
 let lastLogKey = null;
 let startRequestPending = false;
 let latestTaskStatus = null;
+let dragCounter = 0;
+let sseReconnectTimer = null;
+let sseReconnectAttempt = 0;
+const MAX_SSE_RECONNECT = 5;
+const MAX_LOG_LINES = 500;
 
-// Per-call cost estimates in USD (approximate)
+function setCurrentTaskId(id) {
+    currentTaskId = id;
+    if (id) {
+        sessionStorage.setItem('inv_task_id', id);
+    } else {
+        sessionStorage.removeItem('inv_task_id');
+    }
+}
+
+// ===================== Toast =====================
+function showToast(message, type = 'info', duration = 4000) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.textContent = message;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transition = 'opacity 0.3s';
+        setTimeout(() => toast.remove(), 300);
+    }, duration);
+}
+
+// ===================== Cost Estimates =====================
 const COST_PER_CALL = {
     gemini: { extract: 0.02, detect_multi: 0.01 },
-    openai: { extract: 0.03 },
+    openai: { extract: 0.03, detect_multi: 0.02 },
     claude: { arbitrate: 0.02, extract: 0.02, review_receipt: 0.01 },
 };
 const CALL_TYPE_LABELS = {
@@ -213,14 +253,43 @@ function updateModelStats(modelCalls) {
     document.getElementById('stats-total-cost').textContent = `预估总计: ~$${totalCost.toFixed(2)}`;
 }
 
-// --- API Keys ---
+// ===================== API Keys =====================
 const KEY_STORAGE = { gemini: 'inv_key_gemini', openai: 'inv_key_openai', anthropic: 'inv_key_anthropic' };
 const PROVIDERS = ['gemini', 'openai', 'anthropic'];
-const PROVIDER_LABELS = { gemini: 'Gemini', openai: 'OpenAI', anthropic: 'Anthropic' };
+const PROVIDER_LABELS = { gemini: 'Google', openai: 'OpenAI', anthropic: 'Anthropic' };
+const DEFAULT_PROVIDER_MODELS = {
+    gemini: 'gemini-2.5-pro',
+    openai: 'gpt-4o',
+    anthropic: 'claude-sonnet-4-20250514',
+};
+let providerModels = { ...DEFAULT_PROVIDER_MODELS };
 const _keyStatus = Object.fromEntries(PROVIDERS.map(name => [
     name,
     { present: false, source: 'none', valid: null, error: '' },
 ]));
+
+function humanizeModelName(modelId) {
+    if (!modelId) return '';
+    if (modelId === 'gpt-4o') return 'GPT-4o';
+    if (modelId.startsWith('gemini-2.5-pro')) return 'Gemini 2.5 Pro';
+    if (modelId.startsWith('claude-sonnet-4')) return 'Claude Sonnet 4';
+    return modelId;
+}
+
+function getProviderKeyLabel(name) {
+    return `${PROVIDER_LABELS[name]} API 密钥`;
+}
+
+function renderModelLabels() {
+    const labels = {
+        gemini: humanizeModelName(providerModels.gemini) || 'Gemini',
+        openai: humanizeModelName(providerModels.openai) || 'OpenAI',
+        anthropic: humanizeModelName(providerModels.anthropic) || 'Anthropic',
+    };
+    document.getElementById('stats-gemini-label').textContent = labels.gemini;
+    document.getElementById('stats-openai-label').textContent = labels.openai;
+    document.getElementById('stats-claude-label').textContent = labels.anthropic;
+}
 
 function toggleApiKeys() {
     const panel = document.getElementById('api-keys-panel');
@@ -250,8 +319,7 @@ function renderKeyBadges() {
                     ? 'bg-blue-100 text-blue-700'
                     : 'bg-gray-100 text-gray-400';
         const icon = info.valid === true ? ' ✓' : info.valid === false ? ' ✗' : '';
-        const source = info.source === 'browser' ? ' 浏览器' : info.source === 'env' ? ' .env' : '';
-        return `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${color}">${PROVIDER_LABELS[name]}${source}${icon}</span>`;
+        return `<span class="text-xs px-2 py-0.5 rounded-full font-medium ${color}">${getProviderKeyLabel(name)}${icon}</span>`;
     }).join('');
 }
 
@@ -284,14 +352,19 @@ function renderProviderStatus(name) {
     }
 
     const sourceText = info.source === 'browser'
-        ? '正在使用浏览器中保存的密钥。'
+        ? `当前使用本地保存的 ${getProviderKeyLabel(name)}。`
         : info.source === 'env'
-            ? '正在使用服务器 .env 中的密钥。'
-            : '尚未配置密钥。';
+            ? `当前使用服务器 .env 中的 ${getProviderKeyLabel(name)}。`
+            : `尚未配置 ${getProviderKeyLabel(name)}。`;
     sourceEl.textContent = sourceText;
 }
 
 function applyStatusSnapshot(snapshot) {
+    providerModels = {
+        ...DEFAULT_PROVIDER_MODELS,
+        ...((snapshot && snapshot._models) || {}),
+    };
+    renderModelLabels();
     PROVIDERS.forEach(name => {
         _keyStatus[name] = normalizeStatus(snapshot[name]);
         renderProviderStatus(name);
@@ -321,7 +394,6 @@ function setValidatingState(on) {
         btn.classList.add('opacity-60', 'cursor-not-allowed');
         msg.textContent = '';
         msg.classList.add('hidden');
-        // Reset icons to spinner
         for (const name of PROVIDERS) {
             document.getElementById(`val-${name}`).textContent = '…';
             document.getElementById(`val-${name}`).className = 'text-lg w-6 text-center text-gray-400';
@@ -370,7 +442,21 @@ async function loadKeyStatus() {
     loadInputsFromBrowserStorage();
     try {
         await pushKeysToServer();
-        await refreshKeyStatus();
+        const status = await refreshKeyStatus();
+
+        // Auto-validate if all keys present but not yet validated
+        const allPresent = PROVIDERS.every(name => _keyStatus[name].present);
+        const anyUnvalidated = PROVIDERS.some(name => _keyStatus[name].valid === null);
+        if (allPresent && anyUnvalidated) {
+            setValidatingState(true);
+            try {
+                const res = await fetch('/api/settings/validate', { method: 'POST' });
+                const result = await res.json();
+                applyValidationResult(result);
+                await refreshKeyStatus();
+            } catch (_) { /* silent */ }
+            finally { setValidatingState(false); }
+        }
     } catch (_) {
         applyStatusSnapshot({});
     }
@@ -429,32 +515,48 @@ async function clearApiKeys() {
 }
 
 // Init on load
+renderModelLabels();
 loadKeyStatus();
 
-// --- Drop zone ---
+// ===================== Drop zone =====================
 const dropZone = document.getElementById('drop-zone');
 const fileInput = document.getElementById('file-input');
 
-dropZone.addEventListener('click', () => fileInput.click());
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('click', () => {
+    fileInput.value = '';  // allow re-selecting same file
+    fileInput.click();
+});
+dropZone.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); dropZone.click(); }
+});
+dropZone.addEventListener('dragover', e => { e.preventDefault(); });
+dropZone.addEventListener('dragenter', e => {
+    e.preventDefault();
+    dragCounter++;
+    dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => {
+    dragCounter--;
+    if (dragCounter <= 0) { dragCounter = 0; dropZone.classList.remove('dragover'); }
+});
 dropZone.addEventListener('drop', e => {
     e.preventDefault();
+    dragCounter = 0;
     dropZone.classList.remove('dragover');
     if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
 });
 fileInput.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0]); });
 
 async function handleFile(file) {
-    if (!file.name.endsWith('.zip')) {
-        alert('请上传 .zip 文件');
+    if (!file.name.toLowerCase().endsWith('.zip')) {
+        showToast('请上传 .zip 文件', 'error');
         return;
     }
 
-    // Block if any key is not validated
+    // Check if all keys are validated
     const failed = PROVIDERS.filter(name => _keyStatus[name].valid !== true);
     if (failed.length > 0) {
-        alert(`上传前请先验证全部 API 密钥。\n未验证：${failed.map(name => PROVIDER_LABELS[name]).join('、')}\n\n请在“API 密钥”面板中点击“保存并验证”。`);
+        showToast(`上传前请先验证全部 API 密钥`, 'warn', 5000);
         // Expand the panel to guide the user
         const panel = document.getElementById('api-keys-panel');
         const chevron = document.getElementById('api-chevron');
@@ -477,38 +579,90 @@ async function handleFile(file) {
 
     try {
         const resp = await fetch('/api/upload', { method: 'POST', body: formData });
-        const data = await resp.json();
+        let data;
+        try { data = await resp.json(); } catch (_) { data = {}; }
         if (!resp.ok) {
-            throw new Error(data.detail || 'Upload failed');
+            const detail = data.detail || `上传失败 (HTTP ${resp.status})`;
+            throw new Error(detail);
         }
-        currentTaskId = data.task_id;
+        setCurrentTaskId(data.task_id);
         addLog(`任务已创建：${currentTaskId}`);
-        addLog('ZIP 上传成功，请点击“开始处理”。');
+        addLog('ZIP 上传成功，请点击"开始处理"。');
         connectSSE();
     } catch (err) {
         addLog(`上传失败：${err.message}`);
+        showToast(`上传失败：${err.message}`, 'error', 5000);
+        // Return to upload section so user can retry
+        setTimeout(() => showSection('upload'), 2000);
     }
 }
 
-// --- SSE ---
+// ===================== SSE =====================
+function clearReconnectTimer() {
+    if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+}
+
 function connectSSE() {
+    if (!currentTaskId) return;
     if (eventSource) eventSource.close();
+    clearReconnectTimer();
     document.getElementById('disconnected-banner').classList.add('hidden');
 
     eventSource = new EventSource(`/api/progress/${currentTaskId}`);
 
     eventSource.addEventListener('progress', e => {
-        const d = JSON.parse(e.data);
-        updateProgress(d);
+        sseReconnectAttempt = 0;  // reset on successful message
+        try {
+            const d = JSON.parse(e.data);
+            updateProgress(d);
+        } catch (parseErr) {
+            addLog(`数据解析异常：${parseErr.message}`);
+        }
     });
 
     eventSource.addEventListener('error', () => {
         eventSource.close();
         eventSource = null;
-        if (!['done', 'error', 'cancelled'].includes(latestTaskStatus)) {
-            document.getElementById('disconnected-banner').classList.remove('hidden');
+
+        if (['done', 'error', 'cancelled'].includes(latestTaskStatus)) {
+            return;  // task finished, no need to reconnect
+        }
+
+        // Auto-reconnect with exponential backoff
+        sseReconnectAttempt++;
+        if (sseReconnectAttempt <= MAX_SSE_RECONNECT) {
+            const delay = Math.min(1000 * Math.pow(2, sseReconnectAttempt - 1), 16000);
+            const banner = document.getElementById('disconnected-banner');
+            const text = document.getElementById('disconnected-text');
+            banner.classList.remove('hidden');
+            text.textContent = `连接已断开，${Math.round(delay / 1000)} 秒后自动重连（第 ${sseReconnectAttempt} 次）...`;
+            document.getElementById('btn-reconnect').classList.add('hidden');
+            sseReconnectTimer = setTimeout(() => connectSSE(), delay);
+        } else {
+            // Give up auto-reconnect, show manual button
+            const banner = document.getElementById('disconnected-banner');
+            const text = document.getElementById('disconnected-text');
+            banner.classList.remove('hidden');
+            text.textContent = '自动重连失败，请手动重新连接。';
+            document.getElementById('btn-reconnect').classList.remove('hidden');
         }
     });
+}
+
+// Map backend current_file English strings to Chinese
+const CURRENT_FILE_MAP = {
+    'Extracting ZIP...': '正在解压 ZIP...',
+    'Generating Excel...': '正在生成 Excel...',
+    'Analyzing files...': '正在分析文件...',
+};
+
+function localizeCurrentFile(text) {
+    if (!text) return '';
+    // Check exact match first
+    if (CURRENT_FILE_MAP[text]) return CURRENT_FILE_MAP[text];
+    // Check prefix match for "Analyzing: filename"
+    if (text.startsWith('Analyzing: ')) return '正在分析：' + text.slice(11);
+    return text;
 }
 
 function updateProgress(d) {
@@ -522,9 +676,10 @@ function updateProgress(d) {
     document.getElementById('progress-bar').style.width = pct + '%';
     document.getElementById('progress-count').textContent = `${d.processed_files}/${d.total_files}`;
 
-    if (d.current_file) {
+    const localizedFile = localizeCurrentFile(d.current_file);
+    if (localizedFile) {
         const label = d.status === 'uploaded' ? '已上传' : '当前';
-        document.getElementById('current-file').textContent = `${label}: ${d.current_file}`;
+        document.getElementById('current-file').textContent = `${label}: ${localizedFile}`;
     } else {
         document.getElementById('current-file').textContent = '';
     }
@@ -563,10 +718,11 @@ function updateProgress(d) {
     else if (d.status === 'error' || d.status === 'cancelled') bar.classList.add('bg-red-500');
     else bar.classList.add('bg-blue-500');
 
-    const logKey = `${d.status}|${d.processed_files}|${d.current_file}`;
+    const logFile = localizedFile || '';
+    const logKey = `${d.status}|${d.processed_files}|${logFile}`;
     if (logKey !== lastLogKey) {
         lastLogKey = logKey;
-        addLog(`[${d.status}] ${d.processed_files}/${d.total_files} - ${d.current_file || ''}`);
+        addLog(`[${statusMap[d.status] || d.status}] ${d.processed_files}/${d.total_files} \u2014 ${logFile}`);
     }
 
     // Show result section
@@ -578,6 +734,11 @@ function updateProgress(d) {
                 ? `处理完成！已处理 ${d.processed_files} 张发票。`
                 : `任务已取消。已处理 ${d.processed_files} 张发票，可下载部分结果。`;
     }
+    if (d.status === 'cancelled' && !d.excel_ready) {
+        document.getElementById('result-section').classList.remove('hidden');
+        document.getElementById('result-text').textContent = '任务已取消。';
+        document.getElementById('btn-download').classList.add('hidden');
+    }
     if (d.status === 'error') {
         document.getElementById('result-section').classList.remove('hidden');
         document.getElementById('result-text').textContent = `错误：${d.error_message}`;
@@ -585,7 +746,7 @@ function updateProgress(d) {
     }
 }
 
-// --- Controls ---
+// ===================== Controls =====================
 function setStartButtonState(loading) {
     const btn = document.getElementById('btn-start');
     startRequestPending = loading;
@@ -613,19 +774,44 @@ async function startTask() {
 }
 
 async function pauseTask() {
-    await fetch(`/api/task/${currentTaskId}/pause`, { method: 'POST' });
+    try {
+        const resp = await fetch(`/api/task/${currentTaskId}/pause`, { method: 'POST' });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            showToast(data.detail || '暂停失败', 'error');
+        }
+    } catch (err) {
+        showToast(`暂停失败：${err.message}`, 'error');
+    }
 }
 
 async function resumeTask() {
-    await fetch(`/api/task/${currentTaskId}/resume`, { method: 'POST' });
+    try {
+        const resp = await fetch(`/api/task/${currentTaskId}/resume`, { method: 'POST' });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            showToast(data.detail || '继续失败', 'error');
+        }
+    } catch (err) {
+        showToast(`继续失败：${err.message}`, 'error');
+    }
 }
 
 async function cancelTask() {
     if (!confirm('确认取消处理吗？已完成的部分结果仍然可以下载。')) return;
-    await fetch(`/api/task/${currentTaskId}/cancel`, { method: 'POST' });
+    try {
+        const resp = await fetch(`/api/task/${currentTaskId}/cancel`, { method: 'POST' });
+        if (!resp.ok) {
+            const data = await resp.json().catch(() => ({}));
+            showToast(data.detail || '取消失败', 'error');
+        }
+    } catch (err) {
+        showToast(`取消失败：${err.message}`, 'error');
+    }
 }
 
-async function reconnect() {
+function manualReconnect() {
+    sseReconnectAttempt = 0;
     document.getElementById('disconnected-banner').classList.add('hidden');
     connectSSE();
 }
@@ -634,7 +820,7 @@ function downloadExcel() {
     window.open(`/api/download/${currentTaskId}`, '_blank');
 }
 
-// --- UI helpers ---
+// ===================== UI helpers =====================
 function showSection(section) {
     document.getElementById('upload-section').classList.toggle('hidden', section !== 'upload');
     document.getElementById('progress-section').classList.toggle('hidden', section !== 'progress');
@@ -643,10 +829,11 @@ function showSection(section) {
 }
 
 function resetUI() {
-    currentTaskId = null;
+    setCurrentTaskId(null);
     lastLogKey = null;
     latestTaskStatus = null;
     setStartButtonState(false);
+    clearReconnectTimer();
     if (eventSource) { eventSource.close(); eventSource = null; }
     document.getElementById('log-area').innerHTML = '';
     document.getElementById('model-stats').classList.add('hidden');
@@ -664,8 +851,22 @@ function addLog(msg) {
     const div = document.createElement('div');
     div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
     area.appendChild(div);
+    // Limit log DOM nodes to prevent memory issues
+    while (area.childElementCount > MAX_LOG_LINES) {
+        area.removeChild(area.firstChild);
+    }
     area.scrollTop = area.scrollHeight;
 }
+
+// ===================== Restore task on page load =====================
+(function restoreTask() {
+    if (!currentTaskId) return;
+    // We have a stored taskId — try to reconnect
+    showSection('progress');
+    document.getElementById('status-text').textContent = '正在恢复任务...';
+    addLog(`恢复之前的任务：${currentTaskId}`);
+    connectSSE();
+})();
 </script>
 </body>
 </html>

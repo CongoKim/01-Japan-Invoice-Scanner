@@ -22,7 +22,7 @@ async def start_task(task_id: str):
         raise HTTPException(404, "未找到已上传的 ZIP 文件")
 
     task.status = "extracting"
-    task.current_file = "Extracting ZIP..."
+    task.current_file = "正在解压 ZIP..."
     task_store.notify(task_id)
 
     asyncio.create_task(process_task(task_id, zip_path, get_task_dir(task_id)))

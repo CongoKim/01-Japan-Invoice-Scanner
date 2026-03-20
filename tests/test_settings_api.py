@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from app.config import API_PROVIDERS, runtime_api_keys
+from app.config import API_PROVIDERS, runtime_api_keys, settings
 from app.main import app
 from app.routers import settings as settings_router
 from app.services import orchestrator
@@ -183,6 +183,18 @@ class SettingsApiTests(unittest.TestCase):
         self.assertEqual(after["gemini"]["error"], "")
         self.assertTrue(after["openai"]["valid"])
         self.assertTrue(after["anthropic"]["valid"])
+
+    def test_get_keys_includes_runtime_model_versions(self):
+        payload = self.client.get("/api/settings/keys").json()
+
+        self.assertEqual(
+            payload["_models"],
+            {
+                "gemini": settings.gemini_model,
+                "openai": settings.openai_model,
+                "anthropic": settings.claude_model,
+            },
+        )
 
     def test_validate_keys_returns_independent_provider_results(self):
         self.client.post(
