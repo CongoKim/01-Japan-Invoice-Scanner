@@ -602,6 +602,63 @@ function clearReconnectTimer() {
     if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
 }
 
+async function fetchTaskSnapshot(taskId = currentTaskId) {
+    const resp = await fetch(`/api/task/${taskId}`);
+    let data = {};
+    try {
+        data = await resp.json();
+    } catch (_) {}
+
+    if (!resp.ok) {
+        const err = new Error(data.detail || `获取任务状态失败 (HTTP ${resp.status})`);
+        err.status = resp.status;
+        throw err;
+    }
+
+    return data;
+}
+
+function handleMissingTask(message) {
+    clearReconnectTimer();
+    if (eventSource) {
+        eventSource.close();
+        eventSource = null;
+    }
+
+    const errorText = message || '任务不存在，可能因为服务已重启或任务已过期，请重新上传。';
+    latestTaskStatus = 'error';
+    setCurrentTaskId(null);
+    document.getElementById('disconnected-banner').classList.add('hidden');
+    document.getElementById('result-section').classList.remove('hidden');
+    document.getElementById('result-text').textContent = errorText;
+    document.getElementById('btn-download').classList.add('hidden');
+    document.getElementById('status-text').textContent = '任务已失效';
+    addLog(errorText);
+    showToast(errorText, 'error', 5000);
+}
+
+async function reconnectToExistingTask() {
+    if (!currentTaskId) return;
+
+    try {
+        const snapshot = await fetchTaskSnapshot();
+        updateProgress(snapshot);
+
+        if (['done', 'error', 'cancelled'].includes(snapshot.status)) {
+            return;
+        }
+
+        connectSSE();
+    } catch (err) {
+        if (err.status === 404 || (err.message && err.message.includes('任务不存在'))) {
+            handleMissingTask(err.message);
+            return;
+        }
+
+        connectSSE();
+    }
+}
+
 function connectSSE() {
     if (!currentTaskId) return;
     if (eventSource) eventSource.close();
@@ -620,10 +677,22 @@ function connectSSE() {
         }
     });
 
+    eventSource.addEventListener('task_missing', e => {
+        try {
+            const data = JSON.parse(e.data);
+            handleMissingTask(data.error);
+        } catch (_) {
+            handleMissingTask();
+        }
+    });
+
     eventSource.addEventListener('error', () => {
         eventSource.close();
         eventSource = null;
 
+        if (!currentTaskId) {
+            return;
+        }
         if (['done', 'error', 'cancelled'].includes(latestTaskStatus)) {
             return;  // task finished, no need to reconnect
         }
@@ -637,7 +706,9 @@ function connectSSE() {
             banner.classList.remove('hidden');
             text.textContent = `连接已断开，${Math.round(delay / 1000)} 秒后自动重连（第 ${sseReconnectAttempt} 次）...`;
             document.getElementById('btn-reconnect').classList.add('hidden');
-            sseReconnectTimer = setTimeout(() => connectSSE(), delay);
+            sseReconnectTimer = setTimeout(() => {
+                reconnectToExistingTask();
+            }, delay);
         } else {
             // Give up auto-reconnect, show manual button
             const banner = document.getElementById('disconnected-banner');
@@ -811,9 +882,13 @@ async function cancelTask() {
 }
 
 function manualReconnect() {
+    if (!currentTaskId) {
+        showToast('当前没有可恢复的任务，请重新上传。', 'warn');
+        return;
+    }
     sseReconnectAttempt = 0;
     document.getElementById('disconnected-banner').classList.add('hidden');
-    connectSSE();
+    reconnectToExistingTask();
 }
 
 function downloadExcel() {
@@ -865,7 +940,7 @@ function addLog(msg) {
     showSection('progress');
     document.getElementById('status-text').textContent = '正在恢复任务...';
     addLog(`恢复之前的任务：${currentTaskId}`);
-    connectSSE();
+    reconnectToExistingTask();
 })();
 </script>
 </body>

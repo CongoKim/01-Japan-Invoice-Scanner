@@ -9,6 +9,27 @@ from app.services.task_runtime import get_task_dir, get_task_upload_path
 router = APIRouter()
 
 
+def _task_payload(task_id: str) -> dict:
+    task = task_store.get(task_id)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+
+    return task.model_dump(
+        exclude={
+            "completed_results",
+            "pending_files",
+            "created_at",
+            "updated_at",
+            "finished_at",
+        }
+    )
+
+
+@router.get("/api/task/{task_id}")
+async def get_task(task_id: str):
+    return _task_payload(task_id)
+
+
 @router.post("/api/task/{task_id}/start")
 async def start_task(task_id: str):
     task = task_store.get(task_id)

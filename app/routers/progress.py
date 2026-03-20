@@ -16,7 +16,10 @@ async def progress_stream(task_id: str):
         while True:
             task = task_store.get(task_id)
             if not task:
-                yield {"event": "error", "data": '{"error": "任务不存在"}'}
+                yield {
+                    "event": "task_missing",
+                    "data": '{"error": "任务不存在，可能因为服务已重启或任务已过期，请重新上传。"}',
+                }
                 break
 
             # Snapshot break-condition values BEFORE yield (yield is an
