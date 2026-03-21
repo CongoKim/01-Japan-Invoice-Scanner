@@ -127,7 +127,7 @@
                                 <div id="stats-openai-cost" class="text-orange-600 font-medium mt-1"></div>
                             </div>
                             <div class="bg-white rounded-lg p-3 border">
-                                <div id="stats-claude-label" class="font-semibold text-purple-600 mb-1">Claude Sonnet 4</div>
+                                <div id="stats-claude-label" class="font-semibold text-purple-600 mb-1">Claude Sonnet 4.6</div>
                                 <div class="text-[11px] text-gray-400 mb-2">仲裁 / 结果复核</div>
                                 <div id="stats-claude-calls" class="text-gray-500"></div>
                                 <div id="stats-claude-cost" class="text-orange-600 font-medium mt-1"></div>
@@ -260,7 +260,7 @@ const PROVIDER_LABELS = { gemini: 'Google', openai: 'OpenAI', anthropic: 'Anthro
 const DEFAULT_PROVIDER_MODELS = {
     gemini: 'gemini-2.5-pro',
     openai: 'gpt-4o',
-    anthropic: 'claude-sonnet-4-20250514',
+    anthropic: 'claude-sonnet-4-6-20250514',
 };
 let providerModels = { ...DEFAULT_PROVIDER_MODELS };
 const _keyStatus = Object.fromEntries(PROVIDERS.map(name => [
@@ -272,6 +272,7 @@ function humanizeModelName(modelId) {
     if (!modelId) return '';
     if (modelId === 'gpt-4o') return 'GPT-4o';
     if (modelId.startsWith('gemini-2.5-pro')) return 'Gemini 2.5 Pro';
+    if (modelId.startsWith('claude-sonnet-4-6')) return 'Claude Sonnet 4.6';
     if (modelId.startsWith('claude-sonnet-4')) return 'Claude Sonnet 4';
     return modelId;
 }

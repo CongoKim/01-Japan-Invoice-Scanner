@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     gemini_model: str = "gemini-2.5-pro"
     openai_model: str = "gpt-4o"
-    claude_model: str = "claude-sonnet-4-20250514"
+    claude_model: str = "claude-sonnet-4-6-20250514"
     openai_extract_max_tokens: int = 1200
     openai_detect_max_tokens: int = 512
     openai_min_interval_seconds: float = 6.0
