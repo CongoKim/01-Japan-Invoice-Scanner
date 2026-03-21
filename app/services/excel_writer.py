@@ -84,18 +84,28 @@ def _resolve_tax_verification_value(
             mode = "sum"
             resolved = direct_sum_total
 
+    # Check if neither interpretation matches consumption_tax
+    mismatch_warning = ""
+    if expected_tax is not None and expected_tax > 0:
+        sumproduct_diff = abs(sumproduct_total - expected_tax) / expected_tax
+        direct_diff = abs(direct_sum_total - expected_tax) / expected_tax
+        if sumproduct_diff > Decimal("0.05") and direct_diff > Decimal("0.05"):
+            mismatch_warning = "\n⚠ 税率明細と消費税額が一致しません。要確認。"
+
     rate_values = ", ".join(_format_decimal(breakdown[rate]) for rate in ("0", "8", "10"))
     if mode == "sum":
         formula_note = (
             "税率明細は票面税額として判定。"
             f"\n合計 = {_format_decimal(breakdown['0'])} + {_format_decimal(breakdown['8'])} + {_format_decimal(breakdown['10'])}"
             f"\n= {_format_decimal(resolved)}"
+            f"{mismatch_warning}"
         )
     else:
         formula_note = (
             "税率明細は税基として判定。"
             f"\nSUMPRODUCT({{0%, 8%, 10%}}, {{{rate_values}}})"
             f"\n= {_format_decimal(resolved)}"
+            f"{mismatch_warning}"
         )
 
     return _excel_value(resolved), formula_note

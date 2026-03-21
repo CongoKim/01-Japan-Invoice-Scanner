@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-pro"
     openai_model: str = "gpt-4o"
     claude_model: str = "claude-sonnet-4-20250514"
+    openai_extract_max_tokens: int = 1200
+    openai_detect_max_tokens: int = 512
+    openai_min_interval_seconds: float = 6.0
     max_concurrency: int = 10
     port: int = 8000
     max_upload_size_bytes: int = 100 * 1024 * 1024

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import time
 from openai import AsyncOpenAI
 
 from app.config import get_effective_api_key, settings
@@ -16,6 +18,8 @@ class OpenAIClient(AIClient):
             raise ValueError("OpenAI API key is not set. Please configure it in the API Keys panel.")
         self.client = AsyncOpenAI(api_key=api_key)
         self.model = settings.openai_model
+        self._rate_limit_lock = asyncio.Lock()
+        self._last_request_started_at = 0.0
 
     def _image_message(self, img_bytes: bytes) -> dict:
         b64 = base64.b64encode(img_bytes).decode()
@@ -23,6 +27,18 @@ class OpenAIClient(AIClient):
             "type": "image_url",
             "image_url": {"url": f"data:image/png;base64,{b64}"},
         }
+
+    async def _throttle_request(self) -> None:
+        interval = max(0.0, settings.openai_min_interval_seconds)
+        if interval <= 0:
+            return
+
+        async with self._rate_limit_lock:
+            now = time.monotonic()
+            elapsed = now - self._last_request_started_at
+            if self._last_request_started_at and elapsed < interval:
+                await asyncio.sleep(interval - elapsed)
+            self._last_request_started_at = time.monotonic()
 
     async def extract_invoice(
         self,
@@ -35,11 +51,12 @@ class OpenAIClient(AIClient):
             content.append(self._image_message(img_bytes))
         content.append({"type": "text", "text": prompt or EXTRACTION_PROMPT})
 
+        await self._throttle_request()
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": content}],
             temperature=0.1,
-            max_tokens=4096,
+            max_tokens=settings.openai_extract_max_tokens,
         )
 
         text = response.choices[0].message.content
@@ -53,11 +70,12 @@ class OpenAIClient(AIClient):
             content.append(self._image_message(img_bytes))
         content.append({"type": "text", "text": MULTI_PAGE_DETECTION_PROMPT})
 
+        await self._throttle_request()
         response = await self.client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": content}],
             temperature=0.1,
-            max_tokens=1024,
+            max_tokens=settings.openai_detect_max_tokens,
         )
 
         text = response.choices[0].message.content

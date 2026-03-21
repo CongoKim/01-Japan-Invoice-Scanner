@@ -11,6 +11,7 @@ from app.services.prompt import (
     EXTRACTION_PROMPT,
     MULTI_PAGE_DETECTION_PROMPT,
     RECEIPT_TOTAL_REVIEW_PROMPT,
+    STATEMENT_TOTAL_REVIEW_PROMPT,
     build_arbitration_prompt,
 )
 
@@ -109,6 +110,23 @@ class ClaudeClient(AIClient):
         for img_bytes in images:
             content.append(self._image_block(img_bytes))
         content.append({"type": "text", "text": RECEIPT_TOTAL_REVIEW_PROMPT})
+
+        response = await self.client.messages.create(
+            model=self.model,
+            max_tokens=1024,
+            temperature=0.1,
+            messages=[{"role": "user", "content": content}],
+        )
+
+        text = response.content[0].text
+        return self.parse_json_response(text)
+
+    async def review_statement_total(self, images: list[bytes]) -> dict:
+        """Ask Claude to determine only the final total on utility-like statements."""
+        content = []
+        for img_bytes in images:
+            content.append(self._image_block(img_bytes))
+        content.append({"type": "text", "text": STATEMENT_TOTAL_REVIEW_PROMPT})
 
         response = await self.client.messages.create(
             model=self.model,

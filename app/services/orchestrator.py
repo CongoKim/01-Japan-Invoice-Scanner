@@ -14,7 +14,11 @@ from app.models.task import task_store
 from app.services.ai_clients.claude import ClaudeClient
 from app.services.ai_clients.gemini import GeminiClient
 from app.services.ai_clients.openai_client import OpenAIClient
-from app.services.comparator import compare_and_arbitrate
+from app.services.comparator import (
+    check_amount_consistency,
+    compare_and_arbitrate,
+    maybe_fill_consumption_tax,
+)
 from app.services.excel_writer import write_excel
 from app.services.extractor import extract_zip, is_pdf
 from app.services.pdf_processor import render_pdf_pages
@@ -22,6 +26,17 @@ from app.services.prompt import build_extraction_prompt
 from app.services.task_runtime import get_task_output_path
 
 logger = logging.getLogger(__name__)
+
+UTILITY_TOTAL_KEYWORDS = (
+    "東京ガス",
+    "東京都水道局",
+    "水道料金",
+    "下水道料金",
+    "ガス料金",
+    "電気料金",
+    "公共料金",
+)
+PLACEHOLDER_REGISTRATION_NUMBERS = {"T1234567890123"}
 
 
 def _track_call(task_id: str, model: str, call_type: str) -> None:
@@ -35,7 +50,7 @@ def _track_call(task_id: str, model: str, call_type: str) -> None:
 
 ANALYSIS_CONCURRENCY_LIMIT = 4
 WORK_QUEUE_MULTIPLIER = 2
-MAX_RETRIES = 2
+MAX_RETRIES = 4
 SINGLE_MODEL_REVIEW_FIELDS = (
     "issuer",
     "registration_number",
@@ -107,6 +122,9 @@ async def _call_with_retry(coro_func, max_retries: int = MAX_RETRIES, backoff: f
             if attempt == max_retries - 1:
                 raise
             wait = backoff ** attempt
+            retry_after = _extract_retry_delay_seconds(e)
+            if retry_after is not None:
+                wait = max(wait, retry_after + 0.5)
             logger.warning(f"Retry {attempt + 1}/{max_retries} after {wait}s: {e}")
             await asyncio.sleep(wait)
 
@@ -114,6 +132,19 @@ async def _call_with_retry(coro_func, max_retries: int = MAX_RETRIES, backoff: f
 def _compact_exception(exc: Exception) -> str:
     message = re.sub(r"\s+", " ", str(exc)).strip()
     return message[:240]
+
+
+def _extract_retry_delay_seconds(exc: Exception) -> float | None:
+    message = str(exc)
+    match = re.search(r"try again in\s+([\d.]+)\s*(ms|s)\b", message, re.IGNORECASE)
+    if not match:
+        return None
+
+    value = float(match.group(1))
+    unit = match.group(2).lower()
+    if unit == "ms":
+        return value / 1000
+    return value
 
 
 def _attach_model_errors(
@@ -133,6 +164,33 @@ def _count_present_fields(result: InvoiceFields, fields: tuple[str, ...]) -> int
         for field in fields
         if (value := getattr(result, field)) is not None and value != ""
     )
+
+
+def _normalize_text(value: str | None) -> str:
+    return re.sub(r"\s+", "", value or "")
+
+
+def _has_suspicious_total_context(result: InvoiceFields) -> bool:
+    if result.total_amount is None:
+        return False
+
+    if result.registration_number in PLACEHOLDER_REGISTRATION_NUMBERS:
+        return True
+
+    invoice_number = _normalize_text(result.invoice_number)
+    if invoice_number:
+        digits_only = re.sub(r"\D", "", invoice_number)
+        if len(digits_only) <= 4 and result.total_amount >= 10000:
+            return True
+
+    lacks_amount_context = not any(
+        (value := getattr(result, field)) is not None and value != ""
+        for field in SINGLE_MODEL_CONTEXT_FIELDS
+    )
+    if lacks_amount_context and result.total_amount >= 10000:
+        return True
+
+    return False
 
 
 def _should_review_single_model(result: InvoiceFields) -> bool:
@@ -202,7 +260,18 @@ def _should_review_receipt_total(receipt_like: bool, result: InvoiceFields) -> b
     if not receipt_like or result.total_amount is None:
         return False
     present_fields = _count_present_fields(result, SINGLE_MODEL_REVIEW_FIELDS)
-    return present_fields <= MAX_RECEIPT_TOTAL_REVIEW_FIELDS
+    return (
+        present_fields <= MAX_RECEIPT_TOTAL_REVIEW_FIELDS
+        or _has_suspicious_total_context(result)
+    )
+
+
+def _should_review_statement_total(result: InvoiceFields) -> bool:
+    if result.total_amount is None:
+        return False
+
+    combined = _normalize_text(result.issuer) + _normalize_text(result.business_content)
+    return any(keyword in combined for keyword in UTILITY_TOTAL_KEYWORDS)
 
 
 async def _maybe_review_receipt_total(
@@ -256,6 +325,84 @@ async def _maybe_review_receipt_total(
     else:
         result.source_model = "receipt-total-review"
     return result
+
+
+async def _maybe_review_statement_total(
+    *,
+    task_id: str,
+    file_label: str,
+    images: list[bytes],
+    result: InvoiceFields,
+    claude: ClaudeClient,
+) -> InvoiceFields:
+    if not _should_review_statement_total(result):
+        return result
+
+    try:
+        _track_call(task_id, "claude", "review_receipt")
+        review_data = await _call_with_retry(
+            lambda: claude.review_statement_total(images)
+        )
+    except Exception as review_error:
+        logger.warning(
+            f"Statement total review failed for {file_label}: {review_error}"
+        )
+        return result
+
+    reviewed_raw_amount = review_data.get("total_amount")
+    if reviewed_raw_amount is None or reviewed_raw_amount == "":
+        return result
+
+    try:
+        reviewed_amount = InvoiceFields(total_amount=reviewed_raw_amount).total_amount
+    except Exception as review_error:
+        logger.warning(
+            f"Statement total review returned invalid amount for {file_label}: "
+            f"{review_error}"
+        )
+        return result
+
+    if reviewed_amount is None or reviewed_amount == result.total_amount:
+        return result
+
+    logger.info(
+        "Statement total review adjusted %s from %s to %s",
+        file_label,
+        result.total_amount,
+        reviewed_amount,
+    )
+    result.total_amount = reviewed_amount
+    if result.source_model:
+        result.source_model = f"{result.source_model}+statement-total-review"
+    else:
+        result.source_model = "statement-total-review"
+    return result
+
+
+async def _apply_total_reviews(
+    *,
+    task_id: str,
+    file_label: str,
+    images: list[bytes],
+    receipt_like: bool,
+    result: InvoiceFields,
+    claude: ClaudeClient,
+) -> InvoiceFields:
+    result = await _maybe_review_receipt_total(
+        task_id=task_id,
+        file_label=file_label,
+        images=images,
+        receipt_like=receipt_like,
+        result=result,
+        claude=claude,
+    )
+    return await _maybe_review_statement_total(
+        task_id=task_id,
+        file_label=file_label,
+        images=images,
+        result=result,
+        claude=claude,
+    )
 
 
 async def _wait_until_active(task_id: str):
@@ -337,6 +484,18 @@ def _prepare_images(file_path: Path) -> list[bytes]:
             return None
         return image.crop((left, top, right, bottom))
 
+    def build_receipt_summary_crop(image: Image.Image) -> Image.Image | None:
+        width, height = image.size
+        if width < 200 or height < 200:
+            return None
+        left = int(width * 0.08)
+        right = int(width * 0.92)
+        top = int(height * 0.12)
+        bottom = int(height * 0.68)
+        if right - left < 80 or bottom - top < 80:
+            return None
+        return image.crop((left, top, right, bottom))
+
     with Image.open(file_path) as img:
         base_image = img.convert("RGB")
         images = [encode_png(base_image)]
@@ -344,6 +503,9 @@ def _prepare_images(file_path: Path) -> list[bytes]:
         if is_receipt_like(base_image):
             enhanced_image = build_enhanced_view(base_image)
             images.append(encode_png(enhanced_image))
+            summary_crop = build_receipt_summary_crop(enhanced_image)
+            if summary_crop is not None:
+                images.append(encode_png(summary_crop))
             focus_crop = build_receipt_focus_crop(enhanced_image)
             if focus_crop is not None:
                 images.append(encode_png(focus_crop))
@@ -603,7 +765,7 @@ async def _process_single_invoice(
                 fallback_source_prefix="openai-only",
                 gemini_error=gemini_error,
             )
-            return await _maybe_review_receipt_total(
+            return await _apply_total_reviews(
                 task_id=task_id,
                 file_label=file_label,
                 images=images,
@@ -630,7 +792,7 @@ async def _process_single_invoice(
                 fallback_source_prefix="gemini-only",
                 openai_error=openai_error,
             )
-            return await _maybe_review_receipt_total(
+            return await _apply_total_reviews(
                 task_id=task_id,
                 file_label=file_label,
                 images=images,
@@ -657,7 +819,7 @@ async def _process_single_invoice(
             )
         )
         result = _attach_model_errors(result)
-        return await _maybe_review_receipt_total(
+        return await _apply_total_reviews(
             task_id=task_id,
             file_label=file_label,
             images=images,
@@ -669,7 +831,7 @@ async def _process_single_invoice(
         logger.warning(f"Arbitration failed for {file_label}: {e}, using Gemini result")
         gemini_result.source_model = f"gemini-fallback:{gemini_result.source_model}"
         result = _attach_model_errors(gemini_result)
-        return await _maybe_review_receipt_total(
+        return await _apply_total_reviews(
             task_id=task_id,
             file_label=file_label,
             images=images,
@@ -708,6 +870,19 @@ async def _ocr_worker(
                 )
             except Exception as e:
                 result = InvoiceFields(file_name=label, error=str(e))
+
+            # Try to fill missing consumption_tax from tax_verification
+            maybe_fill_consumption_tax(result)
+
+            # Post-extraction amount consistency check
+            consistency_warnings = check_amount_consistency(result)
+            if consistency_warnings:
+                warning_text = "; ".join(consistency_warnings)
+                logger.warning("Amount consistency issue for %s: %s", label, warning_text)
+                if result.error:
+                    result.error = f"{result.error}; {warning_text}"
+                else:
+                    result.error = warning_text
 
             results[(file_index, item_index)] = result
             if label in task.pending_files:
